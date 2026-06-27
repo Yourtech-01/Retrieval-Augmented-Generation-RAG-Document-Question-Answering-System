@@ -11,12 +11,12 @@ import argparse, hashlib, pathlib, re, time
 from dataclasses import dataclass
 import chromadb
 from chromadb.config import Settings
-from openai import OpenAI
+from sentence_transformers import SentenceTransformer
 
 CHUNK_SIZE    = 512
 CHUNK_OVERLAP = 50
 CHARS_PER_TOK = 4
-EMBED_MODEL   = "text-embedding-3-small"
+EMBED_MODEL   = SentenceTransformer("all-MiniLM-L6-v2")
 COLLECTION    = "documents"
 DB_PATH       = "./data/chroma_db"
 BATCH_SIZE    = 100
@@ -69,7 +69,7 @@ def chunk_text(text: str, doc_id: str, metadata: dict) -> list:
         for i, c in enumerate(chunks) if len(c.strip()) > 50
     ]
 
-def embed_batch(texts: list, client: OpenAI) -> list:
+def embed_batch(texts: list, client: None) -> list:
     for attempt in range(3):
         try:
             resp = client.embeddings.create(model=EMBED_MODEL, input=texts)
@@ -78,11 +78,12 @@ def embed_batch(texts: list, client: OpenAI) -> list:
             if attempt == 2: raise
             print(f"  Retry {attempt+1}: {e}")
             time.sleep(2 ** attempt)
-    return []
+    return _embedder.encode(texts).tolist()
+
 
 def ingest(docs_dir: str, reset: bool = False) -> dict:
     docs_path  = pathlib.Path(docs_dir)
-    openai_cli = OpenAI()
+    embeddings = embed_batch([c.text for c in batch])
     chroma = chromadb.PersistentClient(path=DB_PATH,
                 settings=Settings(anonymized_telemetry=False))
     if reset:
