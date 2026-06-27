@@ -10,8 +10,9 @@ Endpoints:
 
 import os
 from typing import AsyncGenerator
-
 import chromadb
+import google.generativeai as genai
+from sentence_transformers import SentenceTransformer
 from chromadb.config import Settings
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -21,13 +22,14 @@ from pydantic import BaseModel, Field
 
 DB_PATH     = os.getenv("CHROMA_PATH", "./data/chroma_db")
 COLLECTION  = "documents"
-EMBED_MODEL = "text-embedding-3-small"
-LLM_MODEL   = os.getenv("LLM_MODEL", "gpt-4o-mini")
+genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+llm = genai.GenerativeModel("gemini-1.5-flash")
+embedder = SentenceTransformer("all-MiniLM-L6-v2")
+LLM_MODEL = "gemini-1.5-flash"
+EMBED_MODEL = "all-MiniLM-L6-v2"
 TOP_K       = int(os.getenv("TOP_K", "5"))
 MAX_TOKENS  = 1024
 
-openai_sync  = OpenAI()
-openai_async = AsyncOpenAI()
 
 chroma = chromadb.PersistentClient(
     path=DB_PATH, settings=Settings(anonymized_telemetry=False))
@@ -53,8 +55,7 @@ class AskResponse(BaseModel):
     model: str
 
 def embed_query(question: str) -> list:
-    resp = openai_sync.embeddings.create(model=EMBED_MODEL, input=[question])
-    return resp.data[0].embedding
+    return embedder.encode([question])[0].tolist()
 
 def retrieve_chunks(embedding: list, top_k: int) -> list:
     if collection is None:
@@ -95,10 +96,8 @@ def ask(req: AskRequest):
     if not chunks:
         raise HTTPException(status_code=404, detail="No relevant chunks found.")
     prompt   = build_prompt(req.question, chunks)
-    response = openai_sync.chat.completions.create(
-        model=LLM_MODEL, max_tokens=MAX_TOKENS,
-        messages=[{"role": "user", "content": prompt}])
-    answer  = response.choices[0].message.content
+    response = llm.generate_content(prompt)
+    answer = response.text
     sources = [Source(source=c["source"], chunk_index=c["chunk_index"],
                       excerpt=c["text"][:200] + "...") for c in chunks]
     return AskResponse(question=req.question, answer=answer,
